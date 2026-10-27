@@ -1,0 +1,6 @@
+*.xlsx
+*.csv
+*.json
+!mock_data.js
+.env
+.firebase/

@@ -1,0 +1,654 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ciclo de Aprovações | AgroTech Bioenergia S.A.</title>
+
+  <!-- Aplica o tema salvo antes da renderização (evita "piscar" o tema claro) -->
+  <script>
+    try { document.documentElement.setAttribute('data-theme', localStorage.getItem('eco_theme') || 'light'); } catch (e) {}
+  </script>
+
+  <!-- CSS Principal -->
+  <link rel="stylesheet" href="css/styles.css">
+
+  <!-- Bibliotecas Locais (Compatíveis com Firebase e Offline) -->
+  <script src="js/papaparse.min.js"></script>
+  <script src="js/xlsx.full.min.js"></script>
+  <script src="js/apexcharts.min.js"></script>
+  <script src="js/lucide.min.js"></script>
+</head>
+<body>
+
+  <!-- Loading Overlay -->
+  <div id="loading-overlay" class="loading-overlay" style="display: flex;">
+    <div class="spinner"></div>
+    <div class="loading-title">Carregando dados das alçadas...</div>
+    <div class="loading-sub">AgroTech Bioenergia S.A.</div>
+  </div>
+
+  <!-- Cabeçalho -->
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand">
+        <div class="brand-mark"><i data-lucide="leaf"></i></div>
+        <div>
+          <div class="brand-title">AgroTech Bioenergia S.A.</div>
+          <div class="brand-subtitle">Ciclo de Aprovações · Alçadas SC / PC / IP</div>
+        </div>
+      </div>
+
+      <div class="topbar-actions">
+        <div class="data-indicator" title="Origem dos dados carregados">
+          <span class="data-dot"></span>
+          <span id="data-indicator-text">Carregando dados...</span>
+        </div>
+        <button class="btn btn-ghost" id="theme-toggle-btn" onclick="App.toggleTheme()" title="Alternar tema claro / escuro">
+          <span id="theme-toggle-icon-wrap" style="display:inline-flex;"><i data-lucide="moon"></i></span>
+          <span id="theme-toggle-text" class="btn-label">Tema escuro</span>
+        </button>
+        <button class="btn btn-ghost" onclick="App.openModal('modal-upload')" title="Carregar nova extração">
+          <i data-lucide="upload-cloud"></i><span class="btn-label">Atualizar dados</span>
+        </button>
+        <button class="btn btn-ghost" onclick="App.openApproverModal()" title="Mapear nomes dos aprovadores">
+          <i data-lucide="users"></i><span class="btn-label">Aprovadores</span>
+        </button>
+        <button class="btn btn-primary" onclick="App.exportData()" title="Exportar a visão atual em CSV">
+          <i data-lucide="download"></i><span class="btn-label">Exportar</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Navegação por Subpáginas -->
+    <nav class="tabs-bar" role="tablist">
+      <button class="tab active" id="tab-btn-total" data-tab="total" role="tab" aria-selected="true" onclick="App.switchTab('total')">
+        <i data-lucide="layout-dashboard"></i>
+        <span>Visão Geral</span>
+        <span class="tab-badge" id="tab-badge-total">0</span>
+      </button>
+      <button class="tab" id="tab-btn-sc" data-tab="sc" role="tab" aria-selected="false" onclick="App.switchTab('sc')">
+        <i data-lucide="file-text"></i>
+        <span>Solicitações (SC)</span>
+        <span class="tab-badge" id="tab-badge-sc">0 pendentes</span>
+      </button>
+      <button class="tab" id="tab-btn-pc" data-tab="pc" role="tab" aria-selected="false" onclick="App.switchTab('pc')">
+        <i data-lucide="shopping-cart"></i>
+        <span>Pedidos (PC &amp; IP)</span>
+        <span class="tab-badge" id="tab-badge-pc">0 pendentes</span>
+      </button>
+    </nav>
+  </header>
+
+  <!-- Conteúdo Principal -->
+  <main class="container">
+
+    <!-- Barra de Filtros (fixa ao rolar) -->
+    <section class="filterbar" id="filterbar">
+      <!-- Linha 1: busca, período, status, ações -->
+      <div class="filterbar-row">
+        <div class="search-box" id="search-box">
+          <i data-lucide="search"></i>
+          <input type="text" id="filter-busca" placeholder="Buscar nº da SC/PC, aprovador ou código..." autocomplete="off">
+          <span class="search-kbd">/</span>
+          <button class="search-clear" id="search-clear-btn" type="button" title="Limpar busca"><i data-lucide="x"></i></button>
+        </div>
+
+        <div class="segmented" id="period-segment" aria-label="Período de emissão">
+          <button class="seg-btn active" data-period="atual_18">Desde 18/09</button>
+          <button class="seg-btn" data-period="setembro">Set/2026</button>
+          <button class="seg-btn" data-period="30dias">30 dias</button>
+          <button class="seg-btn" data-period="ano_2026">2026</button>
+          <button class="seg-btn" data-period="todos">Tudo</button>
+        </div>
+
+        <div class="segmented" aria-label="Status">
+          <button class="seg-btn active" id="chip-status-todos" data-status="TODOS" onclick="App.setStatusFilter('TODOS')">
+            Todos <span class="seg-count" id="chip-count-todos">0</span>
+          </button>
+          <button class="seg-btn" id="chip-status-pendente" data-status="Pendente" onclick="App.setStatusFilter('Pendente')">
+            <span class="seg-dot dot-warn"></span> Pendentes <span class="seg-count warn" id="chip-count-pend">0</span>
+          </button>
+          <button class="seg-btn" id="chip-status-liberado" data-status="Liberado" onclick="App.setStatusFilter('Liberado')">
+            <span class="seg-dot dot-ok"></span> Concluídos <span class="seg-count ok" id="chip-count-lib">0</span>
+          </button>
+        </div>
+
+        <div class="filterbar-actions">
+          <button class="btn btn-ghost btn-sm" id="toggle-advanced-btn" onclick="App.toggleAdvancedFilters()" aria-expanded="false" aria-controls="advanced-panel">
+            <i data-lucide="sliders-horizontal"></i> Mais filtros <span class="count-dot" id="advanced-count" hidden>0</span>
+          </button>
+          <button class="btn btn-ghost btn-sm" id="reset-filters-btn" onclick="App.resetFilters()" title="Voltar aos filtros padrão">
+            <i data-lucide="rotate-ccw"></i> Limpar
+          </button>
+        </div>
+      </div>
+
+      <!-- Linha 2: filiais + total de resultados -->
+      <div class="filterbar-row">
+        <span class="filter-label"><i data-lucide="building-2"></i> Filial</span>
+        <div class="chips" id="filial-chips"></div>
+        <div class="result-summary"><strong id="result-count">0</strong> <span id="result-label">processos na visão</span></div>
+      </div>
+
+      <!-- Filtros avançados (recolhíveis) -->
+      <div class="advanced-panel" id="advanced-panel" hidden>
+        <div class="form-group">
+          <label for="filter-data-inicio">Emissão a partir de</label>
+          <input type="date" id="filter-data-inicio" class="form-control" value="2026-09-18">
+        </div>
+        <div class="form-group">
+          <label for="filter-data-fim">Emissão até</label>
+          <input type="date" id="filter-data-fim" class="form-control">
+        </div>
+        <div class="form-group">
+          <label for="filter-filial">Filial</label>
+          <select id="filter-filial" class="form-control">
+            <option value="TODOS">Todas as filiais</option>
+          </select>
+        </div>
+        <div class="form-group" id="filter-tipo-container">
+          <label for="filter-tipo">Tipo de documento</label>
+          <select id="filter-tipo" class="form-control">
+            <option value="TODOS">Todos os tipos</option>
+            <option value="SC">SC · Solicitação de Compra</option>
+            <option value="PC">PC · Pedido de Compra</option>
+            <option value="IP">IP · Alçada por Item</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="filter-aprovador">Aprovador</label>
+          <select id="filter-aprovador" class="form-control">
+            <option value="TODOS">Todos os aprovadores</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="filter-sla">Semáforo de SLA</label>
+          <select id="filter-sla" class="form-control">
+            <option value="TODOS">Todos os prazos</option>
+            <option value="no_prazo">No prazo (até 2 dias)</option>
+            <option value="alerta">Atenção (3 a 5 dias)</option>
+            <option value="gargalo">Gargalo (&gt; 5 dias)</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Filtros ativos (removíveis individualmente) -->
+      <div class="active-filters" id="active-filters" hidden></div>
+    </section>
+
+    <!-- ========================================== -->
+    <!-- SUBPÁGINA 1: VISÃO GERAL (TOTAL CONSOLIDADO) -->
+    <!-- ========================================== -->
+    <div id="subpage-total" class="subpage-view active">
+
+      <!-- Mini Janelas Comparativas: SC → PC -->
+      <section class="flow-grid">
+        <!-- Mini Janela SC -->
+        <div class="flow-card tone-sc">
+          <div class="flow-head">
+            <div class="flow-head-main">
+              <div class="flow-icon"><i data-lucide="file-text"></i></div>
+              <div>
+                <div class="flow-title">Solicitações de Compra (SC)</div>
+                <div class="flow-sub">Autorização da necessidade pela área requisitante</div>
+              </div>
+            </div>
+            <span class="step-tag">Etapa 1</span>
+          </div>
+
+          <div class="flow-stats">
+            <div class="flow-stat">
+              <div class="flow-stat-val val-accent" id="mini-sc-total">0</div>
+              <div class="flow-stat-lbl">Total de SCs</div>
+            </div>
+            <div class="flow-stat">
+              <div class="flow-stat-val val-warn" id="mini-sc-pendentes">0</div>
+              <div class="flow-stat-lbl">Pendentes</div>
+            </div>
+            <div class="flow-stat">
+              <div class="flow-stat-val val-ok" id="mini-sc-liberados">0</div>
+              <div class="flow-stat-lbl">Concluídas</div>
+            </div>
+          </div>
+
+          <div class="progress-row">
+            <div class="progress-meta"><span>Ciclo concluído</span><strong id="mini-sc-progress-label">0%</strong></div>
+            <div class="progress"><span id="mini-sc-progress"></span></div>
+          </div>
+
+          <div class="flow-gargalo">
+            <i data-lucide="alert-triangle"></i> Maior gargalo: <span id="mini-sc-gargalo">-</span>
+          </div>
+
+          <div class="flow-foot">
+            <span>SLA médio: <strong id="mini-sc-sla">0 dias</strong></span>
+            <button class="btn btn-sc btn-sm" onclick="App.switchTab('sc')">
+              Abrir SCs <i data-lucide="arrow-right"></i>
+            </button>
+          </div>
+        </div>
+
+        <div class="flow-arrow"><div class="flow-arrow-inner"><i data-lucide="arrow-right"></i></div></div>
+
+        <!-- Mini Janela PC -->
+        <div class="flow-card tone-pc">
+          <div class="flow-head">
+            <div class="flow-head-main">
+              <div class="flow-icon"><i data-lucide="shopping-cart"></i></div>
+              <div>
+                <div class="flow-title">Pedidos de Compra (PC &amp; IP)</div>
+                <div class="flow-sub">Aprovação comercial e financeira (Suprimentos / Diretoria)</div>
+              </div>
+            </div>
+            <span class="step-tag">Etapa 2</span>
+          </div>
+
+          <div class="flow-stats">
+            <div class="flow-stat">
+              <div class="flow-stat-val val-accent" id="mini-pc-total">0</div>
+              <div class="flow-stat-lbl">Total de pedidos</div>
+            </div>
+            <div class="flow-stat">
+              <div class="flow-stat-val val-warn" id="mini-pc-pendentes">0</div>
+              <div class="flow-stat-lbl">Pendentes</div>
+            </div>
+            <div class="flow-stat">
+              <div class="flow-stat-val val-ok" id="mini-pc-liberados">0</div>
+              <div class="flow-stat-lbl">Concluídos</div>
+            </div>
+          </div>
+
+          <div class="progress-row">
+            <div class="progress-meta"><span>Ciclo concluído</span><strong id="mini-pc-progress-label">0%</strong></div>
+            <div class="progress"><span id="mini-pc-progress"></span></div>
+          </div>
+
+          <div class="flow-gargalo">
+            <i data-lucide="alert-triangle"></i> Maior gargalo: <span id="mini-pc-gargalo">-</span>
+          </div>
+
+          <div class="flow-foot">
+            <span>SLA médio: <strong id="mini-pc-sla">0 dias</strong></span>
+            <button class="btn btn-pc btn-sm" onclick="App.switchTab('pc')">
+              Abrir pedidos <i data-lucide="arrow-right"></i>
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- KPIs Gerais -->
+      <section class="kpi-grid">
+        <div class="kpi-card">
+          <div class="kpi-header"><span class="kpi-title">Total consolidado</span><div class="kpi-icon"><i data-lucide="layers"></i></div></div>
+          <div class="kpi-value" id="kpi-total-docs">0</div>
+          <div class="kpi-subtext">Processos únicos (SC + PC + IP)</div>
+        </div>
+        <div class="kpi-card tone-warn">
+          <div class="kpi-header"><span class="kpi-title">Pendências</span><div class="kpi-icon"><i data-lucide="clock"></i></div></div>
+          <div class="kpi-value" id="kpi-pendentes-docs">0</div>
+          <div class="kpi-subtext">Aguardando aprovação agora</div>
+        </div>
+        <div class="kpi-card tone-ok">
+          <div class="kpi-header"><span class="kpi-title">Concluídos</span><div class="kpi-icon"><i data-lucide="check-circle-2"></i></div></div>
+          <div class="kpi-value" id="kpi-liberados-docs">0</div>
+          <div class="kpi-subtext">Ciclo de aprovações finalizado</div>
+        </div>
+        <div class="kpi-card tone-info">
+          <div class="kpi-header"><span class="kpi-title">SLA médio</span><div class="kpi-icon"><i data-lucide="timer"></i></div></div>
+          <div class="kpi-value" id="kpi-sla-medio">0 dias</div>
+          <div class="kpi-subtext">Tempo médio de retenção por alçada</div>
+        </div>
+        <div class="kpi-card tone-danger">
+          <div class="kpi-header"><span class="kpi-title">Maior gargalo</span><div class="kpi-icon"><i data-lucide="alert-triangle"></i></div></div>
+          <div class="kpi-value is-text" id="kpi-gargalo-text">-</div>
+          <div class="kpi-subtext">Aprovador com maior retenção ativa</div>
+        </div>
+      </section>
+
+      <!-- Gráficos Gerais -->
+      <section class="charts-grid">
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title"><i data-lucide="bar-chart-3" class="ic-brand"></i> Carga por aprovador</div>
+            <span class="card-hint">Pendentes · Em espera · Liberados</span>
+          </div>
+          <div class="card-body"><div id="chart-demand-total"></div></div>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title"><i data-lucide="building-2" class="ic-brand"></i> Processos por filial</div>
+            <span class="card-hint"><i data-lucide="filter"></i> Clique numa barra para filtrar</span>
+          </div>
+          <div class="card-body chart-clickable"><div id="chart-filial-total"></div></div>
+        </div>
+      </section>
+
+      <!-- Fila de Aprovadores (Geral) -->
+      <section class="section">
+        <div class="section-title">
+          <h2><i data-lucide="user-check" class="ic-brand"></i> Fila por aprovador</h2>
+          <span class="section-hint">Use <strong>Ver fila</strong> para filtrar os documentos de um aprovador</span>
+        </div>
+        <div class="approvers-cards-grid" id="approvers-cards-container-total"></div>
+      </section>
+
+      <!-- Tabela Geral -->
+      <section class="section">
+        <div class="section-title">
+          <h2><i data-lucide="list-filter" class="ic-brand"></i> Relação consolidada (SC → PC)</h2>
+          <span class="badge badge-neutral badge-lg" id="docs-count-badge-total">0 itens</span>
+        </div>
+        <div class="card">
+          <div class="table-container">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Filial</th>
+                  <th>Tipo</th>
+                  <th>Documento</th>
+                  <th>Emissão</th>
+                  <th>Status</th>
+                  <th>Onde está parado</th>
+                  <th>SLA na alçada</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="documents-tbody-total"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- ========================================== -->
+    <!-- SUBPÁGINA 2: SOLICITAÇÕES DE COMPRA (SC)   -->
+    <!-- ========================================== -->
+    <div id="subpage-sc" class="subpage-view">
+
+      <div class="page-hero tone-sc">
+        <div>
+          <div class="page-hero-title"><i data-lucide="file-text"></i> Fluxo de Solicitações de Compra (SC)</div>
+          <div class="page-hero-desc">
+            <strong>Papel da alçada:</strong> autorizar a <strong>necessidade operacional</strong> pelas lideranças das áreas requisitantes (almoxarifado, manutenção, operações) antes do envio para cotação.
+          </div>
+        </div>
+        <button class="btn btn-secondary btn-sm" onclick="App.switchTab('total')">
+          <i data-lucide="layout-dashboard"></i> Visão geral
+        </button>
+      </div>
+
+      <section class="kpi-grid">
+        <div class="kpi-card tone-sc">
+          <div class="kpi-header"><span class="kpi-title">Total de SCs</span><div class="kpi-icon"><i data-lucide="file-text"></i></div></div>
+          <div class="kpi-value" id="kpi-sc-total">0</div>
+          <div class="kpi-subtext">Solicitações emitidas no período</div>
+        </div>
+        <div class="kpi-card tone-warn">
+          <div class="kpi-header"><span class="kpi-title">SCs pendentes</span><div class="kpi-icon"><i data-lucide="clock"></i></div></div>
+          <div class="kpi-value" id="kpi-sc-pendentes">0</div>
+          <div class="kpi-subtext">Aguardando aprovação da área</div>
+        </div>
+        <div class="kpi-card tone-ok">
+          <div class="kpi-header"><span class="kpi-title">SCs liberadas</span><div class="kpi-icon"><i data-lucide="check-circle-2"></i></div></div>
+          <div class="kpi-value" id="kpi-sc-liberados">0</div>
+          <div class="kpi-subtext">Liberadas para cotação</div>
+        </div>
+        <div class="kpi-card tone-info">
+          <div class="kpi-header"><span class="kpi-title">SLA médio de SC</span><div class="kpi-icon"><i data-lucide="timer"></i></div></div>
+          <div class="kpi-value" id="kpi-sc-sla">0 dias</div>
+          <div class="kpi-subtext">Retenção média na alçada de SC</div>
+        </div>
+        <div class="kpi-card tone-danger">
+          <div class="kpi-header"><span class="kpi-title">Maior gargalo em SC</span><div class="kpi-icon"><i data-lucide="alert-triangle"></i></div></div>
+          <div class="kpi-value is-text" id="kpi-sc-gargalo">-</div>
+          <div class="kpi-subtext">Aprovador de SC com mais retenções</div>
+        </div>
+      </section>
+
+      <section class="charts-grid">
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title"><i data-lucide="bar-chart-3" class="ic-sc"></i> Carga dos aprovadores de SC</div>
+            <span class="card-hint">Pendentes · Em espera · Liberados</span>
+          </div>
+          <div class="card-body"><div id="chart-demand-sc"></div></div>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title"><i data-lucide="building-2" class="ic-sc"></i> SCs por filial</div>
+            <span class="card-hint"><i data-lucide="filter"></i> Clique numa barra para filtrar</span>
+          </div>
+          <div class="card-body chart-clickable"><div id="chart-filial-sc"></div></div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-title">
+          <h2><i data-lucide="user-check" class="ic-sc"></i> Aprovadores com alçada de SC</h2>
+          <span class="section-hint">Use <strong>Ver fila</strong> para filtrar as SCs de um aprovador</span>
+        </div>
+        <div class="approvers-cards-grid" id="approvers-cards-container-sc"></div>
+      </section>
+
+      <section class="section">
+        <div class="section-title">
+          <h2><i data-lucide="file-text" class="ic-sc"></i> Relação de Solicitações de Compra</h2>
+          <span class="badge badge-sc badge-lg" id="docs-count-badge-sc">0 itens</span>
+        </div>
+        <div class="card">
+          <div class="table-container">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Filial</th>
+                  <th>Tipo</th>
+                  <th>Número SC</th>
+                  <th>PC que virou</th>
+                  <th>Emissão</th>
+                  <th>Status</th>
+                  <th>Onde está parado</th>
+                  <th>SLA na alçada</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="documents-tbody-sc"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- ========================================== -->
+    <!-- SUBPÁGINA 3: PEDIDOS DE COMPRA (PC & IP)   -->
+    <!-- ========================================== -->
+    <div id="subpage-pc" class="subpage-view">
+
+      <div class="page-hero tone-pc">
+        <div>
+          <div class="page-hero-title"><i data-lucide="shopping-cart"></i> Fluxo de Pedidos de Compra (PC &amp; IP)</div>
+          <div class="page-hero-desc">
+            <strong>Papel da alçada:</strong> autorizar o <strong>compromisso comercial e financeiro</strong> (fornecedor vencedor, condições negociadas, prazos de pagamento) por Suprimentos, Controladoria e Diretoria.
+          </div>
+        </div>
+        <button class="btn btn-secondary btn-sm" onclick="App.switchTab('total')">
+          <i data-lucide="layout-dashboard"></i> Visão geral
+        </button>
+      </div>
+
+      <section class="kpi-grid">
+        <div class="kpi-card tone-pc">
+          <div class="kpi-header"><span class="kpi-title">Total de pedidos</span><div class="kpi-icon"><i data-lucide="shopping-cart"></i></div></div>
+          <div class="kpi-value" id="kpi-pc-total">0</div>
+          <div class="kpi-subtext">PC + IP no período</div>
+        </div>
+        <div class="kpi-card tone-warn">
+          <div class="kpi-header"><span class="kpi-title">Pedidos pendentes</span><div class="kpi-icon"><i data-lucide="clock"></i></div></div>
+          <div class="kpi-value" id="kpi-pc-pendentes">0</div>
+          <div class="kpi-subtext">Aguardando Suprimentos / Diretoria</div>
+        </div>
+        <div class="kpi-card tone-ok">
+          <div class="kpi-header"><span class="kpi-title">Pedidos concluídos</span><div class="kpi-icon"><i data-lucide="check-circle-2"></i></div></div>
+          <div class="kpi-value" id="kpi-pc-liberados">0</div>
+          <div class="kpi-subtext">Liberados para envio ao fornecedor</div>
+        </div>
+        <div class="kpi-card tone-info">
+          <div class="kpi-header"><span class="kpi-title">SLA médio de pedidos</span><div class="kpi-icon"><i data-lucide="timer"></i></div></div>
+          <div class="kpi-value" id="kpi-pc-sla">0 dias</div>
+          <div class="kpi-subtext">Retenção média na alçada de pedidos</div>
+        </div>
+        <div class="kpi-card tone-danger">
+          <div class="kpi-header"><span class="kpi-title">Maior gargalo em pedidos</span><div class="kpi-icon"><i data-lucide="alert-triangle"></i></div></div>
+          <div class="kpi-value is-text" id="kpi-pc-gargalo">-</div>
+          <div class="kpi-subtext">Aprovador de pedidos com mais retenções</div>
+        </div>
+      </section>
+
+      <section class="charts-grid">
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title"><i data-lucide="bar-chart-3" class="ic-pc"></i> Carga dos aprovadores de pedidos</div>
+            <span class="card-hint">Pendentes · Em espera · Liberados</span>
+          </div>
+          <div class="card-body"><div id="chart-demand-pc"></div></div>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title"><i data-lucide="building-2" class="ic-pc"></i> Pedidos por filial</div>
+            <span class="card-hint"><i data-lucide="filter"></i> Clique numa barra para filtrar</span>
+          </div>
+          <div class="card-body chart-clickable"><div id="chart-filial-pc"></div></div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-title">
+          <h2><i data-lucide="user-check" class="ic-pc"></i> Aprovadores com alçada de pedidos</h2>
+          <span class="section-hint">Use <strong>Ver fila</strong> para filtrar os pedidos de um aprovador</span>
+        </div>
+        <div class="approvers-cards-grid" id="approvers-cards-container-pc"></div>
+      </section>
+
+      <section class="section">
+        <div class="section-title">
+          <h2><i data-lucide="shopping-cart" class="ic-pc"></i> Relação de Pedidos de Compra</h2>
+          <span class="badge badge-pc badge-lg" id="docs-count-badge-pc">0 itens</span>
+        </div>
+        <div class="card">
+          <div class="table-container">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Filial</th>
+                  <th>Tipo</th>
+                  <th>Número pedido</th>
+                  <th>SC de origem</th>
+                  <th>Emissão</th>
+                  <th>Status</th>
+                  <th>Onde está parado</th>
+                  <th>SLA na alçada</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="documents-tbody-pc"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </div>
+
+  </main>
+
+  <!-- MODAL: Linha do Tempo / Esteira de Aprovação -->
+  <div class="modal-overlay" id="modal-esteira">
+    <div class="modal-content">
+      <div class="modal-header">
+        <div>
+          <div class="modal-title" id="modal-doc-title">Documento</div>
+          <div class="modal-subtitle" id="modal-doc-sub">-</div>
+        </div>
+        <button class="modal-close" onclick="App.closeModal('modal-esteira')" title="Fechar"><i data-lucide="x"></i></button>
+      </div>
+      <div class="modal-body" id="modal-timeline-container">
+        <!-- Linha do tempo renderizada dinamicamente -->
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="App.closeModal('modal-esteira')">Fechar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: Mapeamento de Aprovadores (De-Para) -->
+  <div class="modal-overlay" id="modal-aprovadores">
+    <div class="modal-content" style="max-width: 860px;">
+      <div class="modal-header">
+        <div>
+          <div class="modal-title">Nomes dos aprovadores (De-Para)</div>
+          <div class="modal-subtitle">Associe os códigos do Protheus (Cod. Usuário) aos nomes reais e departamentos</div>
+        </div>
+        <button class="modal-close" onclick="App.closeModal('modal-aprovadores')" title="Fechar"><i data-lucide="x"></i></button>
+      </div>
+      <div class="modal-body">
+        <div class="card">
+          <div class="table-container" style="max-height: 420px;">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th style="width: 110px;">Cód. usuário</th>
+                  <th>Nome do colaborador</th>
+                  <th>Cargo / nível de alçada</th>
+                  <th>Área / departamento</th>
+                </tr>
+              </thead>
+              <tbody id="modal-aprovadores-tbody">
+                <!-- Inputs de aprovadores -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="App.closeModal('modal-aprovadores')">Cancelar</button>
+        <button class="btn btn-primary" onclick="App.saveApproverMap()">Salvar nomes</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: Upload de Nova Planilha -->
+  <div class="modal-overlay" id="modal-upload">
+    <div class="modal-content" style="max-width: 540px;">
+      <div class="modal-header">
+        <div>
+          <div class="modal-title">Carregar nova extração</div>
+          <div class="modal-subtitle">Resultado da query de alçadas (SCR) exportado do Protheus</div>
+        </div>
+        <button class="modal-close" onclick="App.closeModal('modal-upload')" title="Fechar"><i data-lucide="x"></i></button>
+      </div>
+      <div class="modal-body">
+        <div class="dropzone" id="file-dropzone">
+          <div class="dropzone-icon"><i data-lucide="file-spreadsheet" style="width:44px;height:44px;display:inline-block;"></i></div>
+          <div class="dropzone-title">Arraste e solte o arquivo aqui</div>
+          <div class="dropzone-sub">Suporta <strong>.JSON</strong>, <strong>.XLSX</strong> ou <strong>.CSV</strong></div>
+          <button class="btn btn-secondary" type="button">Procurar no computador</button>
+          <input type="file" id="file-input" accept=".csv,.xlsx,.xls,.json" style="display: none;">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="App.closeModal('modal-upload')">Cancelar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast de Notificações -->
+  <div class="toast" id="toast">Notificação</div>
+
+  <!-- Scripts da Aplicação -->
+  <script src="js/data_processor.js"></script>
+  <script src="js/app.js"></script>
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      App.init();
+    });
+  </script>
+</body>
+</html>
